@@ -1,0 +1,52 @@
+package org.apache.maven.archetype.maven_archetype_quickstart;
+
+public class Student {
+
+    private String fname;
+    private int age;
+
+    // REQUIRED for Gson
+    public Student() {
+    }
+
+    public String getFname() {
+        return fname;
+    }
+
+    public int getAge() {
+        return age;
+    }
+}
+package org.apache.maven.archetype.maven_archetype_quickstart;
+
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import com.google.gson.Gson;
+
+public class Hi {
+
+    public static void main(String[] args) {
+
+        InputStream input = Hi.class.getClassLoader().getResourceAsStream("data.json");
+
+        if (input == null) {
+            System.out.println("data.json not found");
+            return;
+        }
+
+        try (InputStreamReader reader = new InputStreamReader(input)) {
+            Gson gson = new Gson();
+            Student student = gson.fromJson(reader, Student.class);
+
+            System.out.println(student.getFname());
+            System.out.println(student.getAge());
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+<groupId>com.google.code.gson</groupId>
+    <artifactId>gson</artifactId>
+    <version>2.11.0</version>
+
