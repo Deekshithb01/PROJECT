@@ -1,0 +1,294 @@
+Scope: step-by-step instructions to (A) integrate a communication channel (Slack and Microsoft Teams shown; webhook/cURL fallback provided) so Jenkins reports build status, and (B) enable email notifications for builds. Steps assume a running Jenkins instance with administrative access and a repository with a `Jenkinsfile`. Use the method that matches your environment.
+
+---
+
+# A — Integrate a communication channel for build status
+
+## 0 — prerequisites (both Slack & Teams)
+
+1. Jenkins admin access.
+2. Network access: Jenkins must be able to reach Slack/Teams webhook endpoints.
+3. Install required Jenkins plugins (Manage Jenkins → Manage Plugins → Available):
+
+   * **Pipeline** (core)
+   * **Credentials** (core)
+   * **Slack Notification Plugin** (optional, for Slack plugin)
+   * **Office 365 Connector** or **Microsoft Teams Notifier** (optional, for Teams)
+   * **HTTP Request Plugin** (optional, for generic webhook/cURL approach)
+
+---
+
+## 1 — Create and store credentials in Jenkins
+
+(Manage Jenkins → Credentials → System → Global credentials → Add)
+
+* For Slack (if using API token): add **Secret text** with ID e.g. `slack-token`.
+* For webhook URLs (Slack incoming webhook or Teams incoming webhook): store as **Secret text** with ID e.g. `slack-webhook` / `teams-webhook`.
+* For any HTTP Basic / Bearer auth: store accordingly (username/password or secret text).
+
+Use credential IDs (not raw secrets) inside `Jenkinsfile`.
+
+---
+
+## 2 — Slack — two approaches
+
+### Option A: Slack plugin (simpler if installed)
+
+1. Manage Jenkins → Configure System → find **Slack** section → configure:
+
+   * Workspace/Team domain and integration token (or use the plugin's recommended connection method).
+   * Test connection.
+2. In pipeline use `slackSend` step. Example declarative `Jenkinsfile` snippet:
+
+```groovy
+pipeline {
+  agent any
+  environment {
+    SLACK_CRED = credentials('slack-token') // secret text containing token
+  }
+  stages {
+    stage('Build') { steps { sh 'mvn -B -DskipTests clean package' } }
+  }
+  post {
+    success {
+      slackSend(channel: '#ci', token: env.SLACK_CRED, color: 'good', message: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER} ${env.BUILD_URL}")
+    }
+    failure {
+      slackSend(channel: '#ci', token: env.SLACK_CRED, color: 'danger', message: "FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER} ${env.BUILD_URL}")
+    }
+  }
+}
+```
+
+Notes: plugin behaviour depends on plugin version — some plugin configurations use global App configuration and accept only credential ID; others accept token param.
+
+### Option B: Incoming Webhook + curl (plugin not required)
+
+1. Create incoming webhook in Slack App → get webhook URL (starts with `https://hooks.slack.com/services/...`).
+2. Save webhook as Jenkins secret text `slack-webhook`.
+3. Use pipeline `sh` or `httpRequest` to post JSON:
+
+```groovy
+pipeline {
+  agent any
+  environment { SLACK_WEBHOOK = credentials('slack-webhook') }
+  stages { stage('Build') { steps { sh 'mvn -B -DskipTests clean package' } } }
+  post {
+    success {
+      sh """
+        curl -s -X POST ${env.SLACK_WEBHOOK} \
+          -H 'Content-type: application/json' \
+          --data '{"text":"✅ SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER} ${env.BUILD_URL}"}'
+      """
+    }
+    failure {
+      sh """
+        curl -s -X POST ${env.SLACK_WEBHOOK} \
+          -H 'Content-type: application/json' \
+          --data '{"text":"❌ FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER} ${env.BUILD_URL}"}'
+      """
+    }
+  }
+}
+```
+
+---
+
+## 3 — Microsoft Teams — two approaches
+
+### Option A: Office 365 Connector plugin (uses connector in Jenkins)
+
+1. Create an **Incoming Webhook** in Teams channel (Channel → Connectors → Incoming Webhook) → copy webhook URL.
+2. Store the webhook URL as Jenkins secret `teams-webhook`.
+3. Use curl to post a JSON card; example `Jenkinsfile` snippet:
+
+```groovy
+pipeline {
+  agent any
+  environment { TEAMS_WEBHOOK = credentials('teams-webhook') }
+  stages { stage('Build') { steps { sh 'mvn -B -DskipTests clean package' } } }
+  post {
+    success {
+      sh """
+        curl -s -H 'Content-Type: application/json' -d '{
+          "@type": "MessageCard",
+          "@context": "http://schema.org/extensions",
+          "summary":"Build Success",
+          "themeColor":"00FF00",
+          "title":"SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+          "text":"${env.BUILD_URL}"
+        }' ${env.TEAMS_WEBHOOK}
+      """
+    }
+    failure {
+      sh """
+        curl -s -H 'Content-Type: application/json' -d '{
+          "@type":"MessageCard",
+          "@context":"http://schema.org/extensions",
+          "summary":"Build Failed",
+          "themeColor":"FF0000",
+          "title":"FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+          "text":"${env.BUILD_URL}"
+        }' ${env.TEAMS_WEBHOOK}
+      """
+    }
+  }
+}
+```
+
+### Option B: Office 365 Connector plugin step (if plugin installed)
+
+* Use `office365ConnectorSend` step per plugin docs (some plugin versions require global config or provide pipeline step). Example usage varies by plugin—if installed, consult plugin documentation and use stored webhook.
+
+---
+
+## 4 — Generic webhook / other channels
+
+If you need to integrate other channels (Discord, custom chat, MS Teams via connector, PagerDuty, etc.) use their incoming webhook or REST API and the `curl` approach above. Store webhook/token in Jenkins credentials and call from `post` blocks.
+
+---
+
+# B — Enable email notifications for builds
+
+## 1 — Install plugin(s)
+
+* **Email Extension Plugin** (`email-ext`) — recommended.
+* Optional: **Mailer** (core Jenkins mail support is often present).
+
+## 2 — Configure SMTP in Jenkins
+
+Manage Jenkins → Configure System → E-mail Notification (or Extended E-mail Notification):
+
+1. SMTP server: e.g. `smtp.gmail.com` (for Gmail example, use app password or SMTP relay).
+2. Port: e.g. `587` (TLS) or `465` (SSL).
+3. Check **Use SMTP Authentication** and set system credentials or create a credential and reference it.
+4. Use **Use SSL** / **Use TLS** per provider.
+5. Set **System Admin e-mail address** (from address).
+6. Test configuration with *Test configuration by sending test e-mail*.
+
+Notes: many providers require app-specific password or OAuth. For Gmail, enable 2FA and use App Password; for corporate SMTP use service account.
+
+## 3 — Add credentials for SMTP if needed
+
+Store username/password under Jenkins Credentials and reference them in Configure System.
+
+## 4 — Use email in pipeline
+
+### Option A — Basic `mail` step (simple)
+
+`mail` uses Jenkins mailer config:
+
+```groovy
+post {
+  success {
+    mail to: 'dev-team@example.com',
+         subject: "Build SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+         body: "Build URL: ${env.BUILD_URL}"
+  }
+  failure {
+    mail to: 'dev-team@example.com',
+         subject: "Build FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+         body: "Check console: ${env.BUILD_URL}console"
+  }
+}
+```
+
+### Option B — Email Extension (`emailext`) — richer
+
+Install `email-ext` plugin and add snippet:
+
+```groovy
+post {
+  success {
+    emailext (
+      subject: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+      body: """<p>Build succeeded.</p>
+               <p>Job: ${env.JOB_NAME}</p>
+               <p>Build: ${env.BUILD_NUMBER}</p>
+               <p>URL: ${env.BUILD_URL}</p>""",
+      recipientProviders: [[$class: 'DevelopersRecipientProvider'], [$class: 'RequesterRecipientProvider']],
+      to: 'dev-team@example.com'
+    )
+  }
+  failure {
+    emailext (
+      subject: "FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+      body: "${env.JOB_NAME} #${env.BUILD_NUMBER} failed. Console: ${env.BUILD_URL}console",
+      to: 'dev-team@example.com'
+    )
+  }
+}
+```
+
+`emailext` supports attachments, groovy templates, content tokens, and recipientProviders (commit authors, culprits, requester).
+
+## 5 — Test email notifications
+
+1. Make a commit to trigger build.
+2. Verify recipient receives email.
+3. If not received: check Jenkins system log, SMTP server logs, spam folder, and credentials.
+
+---
+
+# C — Recommended `Jenkinsfile` combining both (Maven example)
+
+```groovy
+pipeline {
+  agent any
+  environment {
+    SLACK_WEBHOOK = credentials('slack-webhook')       // secret text
+    TEAMS_WEBHOOK = credentials('teams-webhook')       // optional
+  }
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+    stage('Build') { steps { sh 'mvn -B -DskipTests clean package' } }
+    stage('Test') {
+      steps { sh 'mvn -B test' }
+      post { always { junit '**/target/surefire-reports/*.xml' } }
+    }
+  }
+  post {
+    success {
+      // Slack
+      sh """curl -s -X POST ${env.SLACK_WEBHOOK} -H 'Content-type: application/json' --data '{"text":"✅ SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER} ${env.BUILD_URL}"}'"""
+      // Teams (optional)
+      sh """curl -s -H 'Content-Type: application/json' -d '{"@type":"MessageCard","@context":"http://schema.org/extensions","summary":"Build Success","themeColor":"00FF00","title":"SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}","text":"${env.BUILD_URL}"}' ${env.TEAMS_WEBHOOK}"""
+      // Email
+      mail to: 'dev-team@example.com', subject: "Build SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}", body: "URL: ${env.BUILD_URL}"
+    }
+    failure {
+      sh """curl -s -X POST ${env.SLACK_WEBHOOK} -H 'Content-type: application/json' --data '{"text":"❌ FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER} ${env.BUILD_URL}"}'"""
+      mail to: 'dev-team@example.com', subject: "Build FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}", body: "Console: ${env.BUILD_URL}console"
+    }
+    always { cleanWs() }
+  }
+}
+```
+
+---
+
+# D — Testing & troubleshooting checklist
+
+* Verify Jenkins can reach webhook endpoints (`curl` from Jenkins server).
+* Confirm stored credential IDs match those referenced in `Jenkinsfile`.
+* Check Jenkins system log for plugin errors.
+* For Slack: check webhook delivery or Slack App logs.
+* For Teams: check connector health and payload schema.
+* For email: verify SMTP credentials and provider restrictions (rate limits, relay rules, 2FA/app password).
+
+---
+
+# E — Security & best practices
+
+* Do not hardcode tokens/URLs in repository; store as Jenkins credentials.
+* Prefer workspace-level or global credentials with least privilege.
+* Limit who can change Jenkins pipelines and credentials.
+* Use ephemeral agents (Docker/Kubernetes) where possible.
+* Use GitHub App for integration where available instead of PATs.
+
+---
+
+If you want, I will:
+
+* produce a `Jenkinsfile` tailored exactly to your Maven project (artifact name, test reports pattern, target email list), or
+* produce the exact curl payload for a formatted Slack message or adaptive card for Teams based on the screenshot/video you provided (I used common card formats above).
