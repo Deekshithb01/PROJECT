@@ -1,0 +1,93 @@
+Python and C++ require different command-line steps. Use the procedure that matches your file type.
+
+---
+
+# 1. Run a Python file
+
+Prerequisites: Python installed and added to PATH.
+
+## A. Windows / macOS / Linux
+
+Open terminal (Command Prompt / PowerShell / Terminal) → go to folder where the file is located:
+
+```
+cd path/to/your/file
+```
+
+Run the file:
+
+```
+python filename.py
+```
+
+or if your system uses `python3`:
+
+```
+python3 filename.py
+```
+
+Example:
+
+```
+python main.py
+```
+
+---
+
+# 2. Run a C++ file
+
+Prerequisites: a C++ compiler installed.
+
+Recommended compilers:
+
+* **Windows:** MinGW or MSYS2 → `g++`
+* **macOS:** Xcode Command Line Tools → `clang++`
+* **Linux:** g++ (usually preinstalled)
+
+## Step 1: Navigate to file folder
+
+```
+cd path/to/your/file
+```
+
+## Step 2: Compile the C++ file
+
+```
+g++ filename.cpp -o output
+```
+
+Example:
+
+```
+g++ main.cpp -o program
+```
+
+## Step 3: Run the compiled program
+
+### Windows:
+
+```
+program.exe
+```
+
+### macOS/Linux:
+
+```
+./program
+```
+
+---
+
+# Quick summary
+
+| Language            | Command               |
+| ------------------- | --------------------- |
+| Python              | `python script.py`    |
+| Python (linux/mac)  | `python3 script.py`   |
+| C++ compile         | `g++ file.cpp -o app` |
+| C++ run (Windows)   | `app.exe`             |
+| C++ run (Linux/mac) | `./app`               |
+
+---
+
+If you want, I can show you how to compile/run C++ with multiple files (`.h`, `.cpp`) or how to pass command-line input arguments.
